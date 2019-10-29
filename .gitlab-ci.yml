@@ -1,0 +1,200 @@
+---
+## Build JAVA applications using Apache Maven (http://maven.apache.org)
+## For docker image tags see https://hub.docker.com/_/maven/
+##
+## For general lifecycle information see https://maven.apache.org/guides/introduction/introduction-to-the-lifecycle.html
+##
+## This template will build and test your projects as well as create the documentation.
+##
+## * Caches downloaded dependencies and plugins between invocation.
+## * Verify but don't deploy merge requests.
+## * Deploy built artifacts from master branch only.
+## * Shows how to use multiple jobs in test stage for verifying functionality
+##   with multiple JDKs.
+## * Uses site:stage to collect the documentation for multi-module projects.
+## * Publishes the documentation for `master` branch.
+
+stages:
+    - build
+    - build-itsmhub
+    - run-test-242
+    - run-test-243
+
+
+variables:
+    PROJECT_NAME: pharmacy
+    ## This will supress any download for dependencies and plugins or upload messages which would clutter the console log.
+    ## `showDateTime` will show the passed time in milliseconds. You need to specify `--batch-mode` to make this work.
+    MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=WARN -Dorg.slf4j.simpleLogger.showDateTime=true -Djava.awt.headless=true"
+    ## As of Maven 3.3.0 instead of this you may define these options in `.mvn/maven.config` so the same config is used
+    ## when running from the command line.
+    ## `installAtEnd` and `deployAtEnd` are only effective with recent version of the corresponding plugins.
+    MAVEN_CLI_OPTS: "--batch-mode --errors --fail-fast --show-version -DinstallAtEnd=true -DdeployAtEnd=true"
+    ## System output
+    DEFSTYLE: "\e[0m"
+    FBLK: "\e[0;30m"
+    FRED: "\e[0;31m"
+    FGRN: "\e[0;32m"
+    FYEL: "\e[0;33m"
+    FBLU: "\e[0;34m"
+    FCYA: "\e[0;36m"
+    BBLK: "\e[40m"
+    BRED: "\e[41m"
+    BGRN: "\e[42m"
+    BYEL: "\e[43m"
+    BBLU: "\e[44m"
+    BCYA: "\e[46m"
+    ## repo url ITSMHub
+    REPO_URL_ITSMHUB: "gitlab.cybercoder.site/java-itsm/ItsmHub.git"
+
+# ------------------------------------------- Build JAVA application section -------------------------------------------
+# For `master` branch run `mvn deploy` automatically.
+# Here you need to decide whether you want to use JDK7 or 8.
+# To get this working you need to define a volume while configuring your gitlab-ci-multi-runner.
+# Mount your `settings.xml` as `/root/.m2/settings.xml` which holds your secrets.
+# See https://maven.apache.org/settings.html
+build:jar:
+    stage: build
+    image: maven:3-jdk-11-slim
+    #image: maven:3-jdk-8-alpine
+    ## Cache downloaded dependencies and plugins between builds.
+    ## To keep cache across branches add 'key: "$CI_JOB_NAME"'
+    cache:
+        key: maven
+        paths:
+            - .m2/repository
+    script:
+        - mvn ${MAVEN_CLI_OPTS} clean package
+    only:
+        - branches
+    ## Archive up the built documentation site.
+    artifacts:
+        paths:
+            - src/*
+            - target/*.jar
+            - target/classes/*.xml
+            - target/classes/*.properties
+        expire_in: 1 day
+    tags:
+        - docker
+#=======================================================================================================================
+
+
+# ------------------------------------------- Build ITSMHub-service section -------------------------------------------
+build-itsmhub:
+    stage: build-itsmhub
+    #image: gradle:latest
+    image: gradle:5.1-jdk
+    script:
+        #- git clone https://${CI_REGISTRY_USER}:${CI_REGISTRY_PASSWORD}@${REPO_URL_ITSMHUB}
+        - git clone https://gitlab-ci-token:${CI_JOB_TOKEN}@${REPO_URL_ITSMHUB}
+        - cd ItsmHub && gradle --no-daemon build
+    only:
+        - branches
+    artifacts:
+        paths:
+            - ItsmHub/build/libs/lib/*.jar
+            - ItsmHub/build/libs/*.jar
+        expire_in: 1 day
+    tags:
+        - docker
+#=======================================================================================================================
+
+
+
+
+# ------------------------------------------------- Run tests section --------------------------------------------------
+.run_env_template: &run_env_template
+    image: openjdk:11-jdk-slim
+    variables:
+        DEBIAN_FRONTEND: noninteractive
+    before_script:
+        - apt-get -yq update > /dev/null
+        - apt-get -yq install wget unzip curl gnupg > /dev/null
+        ## Install Chrome.
+        - curl -sS -o - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add
+        - echo "deb http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list
+        - apt-get -yq update > /dev/null
+        - apt-get -yq install google-chrome-stable > /dev/null
+        ## Install ChromeDriver
+        - wget -q https://chromedriver.storage.googleapis.com/${chrome_driver_release}/chromedriver_linux64.zip -O /tmp/chromedriver_linux64.zip
+        - unzip /tmp/chromedriver_linux64.zip -d /usr/bin/
+        - chmod a+x /usr/bin/chromedriver
+        ## Install Mail User Agent
+        - apt-get -yq install mutt gpgsm > /dev/null
+        ## Install Virtual printer for ItsmHub
+        - apt-get install -y cups cups-pdf > /dev/null
+    script:
+        ## See:
+        ##   * https://mvanbrummen.github.io/post/chromedriver-gitlabci/
+        ##   * https://gist.github.com/ziadoz/3e8ab7e944d02fe872c3454d17af31a5
+        ##   * https://gist.github.com/alonisser/11192482
+
+        ## Init variables
+        - export rc=1
+        - export current_hour=`date -u +'%H'`
+        - |
+          read -r email_distribution_starts email_distribution_ends <<< "${EMAIL_DISTRIBUTION_TIME_RANGE}" \
+              && export email_distribution_after_hour=${email_distribution_starts} \
+              && export email_distribution_before_hour=${email_distribution_ends}
+        ## Debug output
+        - echo "Current Etc/UTC hour value is [${current_hour}]. Email is configured to be sent only if hour >= [${email_distribution_after_hour}] and <= [${email_distribution_before_hour}]"
+        - printf "\n"
+
+        ## Prepare env virtual printer
+        - /usr/sbin/cupsd -f &
+        - sleep 5
+        - lpstat -r
+        - lpadmin -p cups-pdf -v cups-pdf:/ -E -P /usr/share/ppd/cups-pdf/CUPS-PDF_opt.ppd
+        - lpadmin -d cups-pdf
+        - lpstat -p -d
+        
+        ## run ItsmHub service
+        - cd ItsmHub/build/libs/ && java -jar ItsmHub.jar -svc > /dev/null 2>&1 &
+        - sleep 5
+        - ls ItsmHub/build/libs/logs/ && cd ${CI_PROJECT_DIR}
+
+        ## Run tests
+        - |
+          java -jar target/Internalsite-0.0.1-SNAPSHOT-jar-with-dependencies.jar --chrome /usr/bin/chromedriver --headless true \
+              && rc=0 \
+              || true \
+              ; if [ ${current_hour} -ge ${email_distribution_after_hour} ] || [ ${current_hour} -le ${email_distribution_before_hour} ]; then
+                      if [ ${rc} -eq 0 ]; then
+                          subj="[${PROJECT_NAME}] auto tests with ChromeDriver [${chrome_driver_release}] have PASSED on [${CI_COMMIT_REF_SLUG}] branch!";
+                      else
+                          subj="[${PROJECT_NAME}] auto tests with ChromeDriver [${chrome_driver_release}] have FAILED on [${CI_COMMIT_REF_SLUG}] branch!";
+                      fi
+                      echo "${SMTP_CONFIG}" > ~/.muttrc
+                      mutt -s "${subj}" -- ${EMAIL_RECIPIENTS} < ./test-output/custom-report.html
+                fi \
+              ; exit ${rc}
+    dependencies:
+        - build:jar
+        - build-itsmhub
+    artifacts:
+        paths:
+            - test-output/
+            - Report/
+        when: always
+        expire_in: 1 day
+    only:
+        - branches
+    tags:
+        - docker
+        - by17-ci2
+
+run:test:2.42:
+    <<: *run_env_template
+    stage: run-test-242
+    variables:
+        chrome_driver_release: "2.42"
+    allow_failure: true
+    
+
+run:test:2.43:
+    <<: *run_env_template
+    stage: run-test-243
+    variables:
+        chrome_driver_release: "2.43"
+#=======================================================================================================================

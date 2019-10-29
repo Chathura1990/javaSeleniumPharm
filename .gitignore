@@ -1,0 +1,17 @@
+/target/
+/test-output/*
+/Old Reports/*
+/lib/
+/ScreenshotOfTheError/
+/javamail-1.4.5/
+/src/main/resources/driver/
+*.log
+chromedriver.exe
+.idea
+.classpath
+.project
+Internalsite.iml
+testng.out.xml
+pharmacy.iml
+.gradle
+/src/META-INF/MANIFEST.MF

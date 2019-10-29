@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE suite SYSTEM "http://testng.org/testng-1.0.dtd">
+
+<suite name="Pharmacy_Workflow">
+    <test name="Pharmacy_Complete_Workflow">
+        <classes>
+            <class name="itsm_pharmacy_test_files.pharmacy_complete_workflow.PharmCompleteWorkflow"/>
+        </classes>
+    </test><!-- Test 5-->
+
+<!--    <test name="Returns Tab verification Tests">-->
+<!--        <classes>-->
+<!--            <class name="itsm_pharmacy_test_files.management_tab.ReturnsTabVerificationTest"/>-->
+<!--        </classes>-->
+<!--    </test>&lt;!&ndash; Test 6&ndash;&gt;-->
+</suite><!-- Suite 2 -->
